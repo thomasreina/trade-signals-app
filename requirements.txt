@@ -1,0 +1,9 @@
+
+ccxt
+pandas
+numpy
+ta
+requests
+python-dateutil
+scikit-learn
+joblib

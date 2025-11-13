@@ -1,0 +1,3 @@
+
+# Run every hour at minute 3 (gives exchanges a moment to publish the latest candle)
+3 * * * * /usr/bin/env bash -lc "cd /opt/trade-signals && /usr/bin/python3 market_structure_analyzer.py >> logs.txt 2>&1"
