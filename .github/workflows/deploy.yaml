@@ -59,6 +59,7 @@ jobs:
             ${{ steps.vars.outputs.FRONTEND_IMAGE }}:${{ steps.vars.outputs.TAG }}
             ${{ steps.vars.outputs.FRONTEND_IMAGE }}:latest
 
+
   deploy:
     needs: build-and-push
     runs-on: ubuntu-latest
@@ -87,7 +88,6 @@ jobs:
           echo "${{ secrets.KUBECONFIG_BASE64 }}" | base64 -d > $HOME/.kube/config
           chmod 600 $HOME/.kube/config
 
-      # Deploy backend & frontend images
       - name: Update backend & frontend images
         run: |
           kubectl -n ${{ env.K8S_NAMESPACE }} set image deployment/backend \
