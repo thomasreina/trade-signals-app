@@ -32,7 +32,7 @@ jobs:
           echo "BACKEND_IMAGE=${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.APP_NAME }}-backend" >> $GITHUB_OUTPUT
           echo "FRONTEND_IMAGE=${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.APP_NAME }}-frontend" >> $GITHUB_OUTPUT
 
-      -       - name: Log in to GHCR
+      - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
