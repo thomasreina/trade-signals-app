@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: trade-signals
+  labels:
+    app: trade-signals
+    tier: backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: trade-signals
+      tier: backend
+  template:
+    metadata:
+      labels:
+        app: trade-signals
+        tier: backend
+    spec:
+      containers:
+        - name: backend
+          image: docker.io/thomasreina/trade-signals-backend:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          env:
+            # Add any real env vars you need here
+            - name: LOG_LEVEL
+              value: "info"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: trade-signals
+  labels:
+    app: trade-signals
+    tier: backend
+spec:
+  selector:
+    app: trade-signals
+    tier: backend
+  ports:
+    - port: 8000
+      targetPort: 8000
+  type: ClusterIP
+

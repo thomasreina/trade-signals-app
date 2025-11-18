@@ -1,0 +1,26 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: trade-signals
+  labels:
+    app: trade-signals
+    tier: frontend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: trade-signals
+      tier: frontend
+  template:
+    metadata:
+      labels:
+        app: trade-signals
+        tier: frontend
+    spec:
+      containers:
+        - name: frontend
+          image: docker.io/thomasreina/trade-signals-frontend:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 80
