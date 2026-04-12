@@ -821,3 +821,26 @@ def analyze_symbol(symbol: str = "BTC", timeframe: str = "1h", limit: int = 200)
     df  = _compute_choch_bos(df)
     df  = _compute_ranges(df)
     return df
+
+
+def analyze_symbol_smc(symbol: str = "BTC", timeframe: str = "1h", limit: int = 200):
+    """
+    Full analysis returning (df, SmcResult).
+
+    ``df``        — enriched OHLCV with OI / funding / RSI / ATR columns.
+    ``SmcResult`` — complete LuxAlgo SMC overlay data (swing + internal
+                    structure, OBs, FVGs, EQH/EQL, Strong/Weak, P/D zones).
+    """
+    from smc_engine import analyze_smc  # import here to avoid circular deps
+
+    sym = SYMBOL_MAP.get(symbol.upper(), SYMBOL_MAP["BTC"])
+    tz  = TZ
+
+    ex  = ccxt.binance()
+    df  = load_price_df(ex, sym["spot"], timeframe, limit, tz)
+    df  = attach_aggregated_oi_and_funding(df, sym["fut"], sym["okx"], timeframe, limit, tz)
+    df  = compute_signals(df)           # RSI, ATR, swings, sweeps (legacy)
+
+    smc = analyze_smc(df)               # LuxAlgo engine
+
+    return df, smc
