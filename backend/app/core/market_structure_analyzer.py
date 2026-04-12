@@ -42,19 +42,37 @@ os.environ.setdefault("MODEL_PATH", model_path)
 os.environ.setdefault("SAVE_SIGNALS_PATH", f"signals_{symbol_fut}_{tf}.csv")
 
 # --------- Import the real analyzer from the project root ---------
-from market_structure_analyzer import run_analyzer as _run_analyzer  # type: ignore  # noqa: E402
+from market_structure_analyzer import (  # type: ignore  # noqa: E402
+    run_analyzer as _run_analyzer,
+    analyze_symbol_smc as _analyze_symbol_smc,
+)
+from smc_engine import SmcResult  # type: ignore  # noqa: E402
 
 
 def run_analyzer() -> pd.DataFrame:
-    """
-    Thin wrapper used by the FastAPI backend.
-
-    Delegates to the root-level `market_structure_analyzer.run_analyzer()`
-    so we don't duplicate complex trading logic inside the backend package.
-    """
+    """Thin wrapper: delegates to root-level generate_signals()."""
     df: Any = _run_analyzer()
     if df is None:
         return pd.DataFrame()
     if not isinstance(df, pd.DataFrame):
         raise TypeError("run_analyzer() did not return a pandas DataFrame")
     return df
+
+
+def analyze_symbol_smc(
+    symbol: str = "BTC",
+    timeframe: str = "1h",
+    limit: int = 200,
+) -> tuple[pd.DataFrame, SmcResult]:
+    """
+    Full LuxAlgo SMC analysis for BTC or ETH.
+    Returns (df, SmcResult) — df carries OI/funding/RSI columns;
+    SmcResult carries all structural overlay data.
+    """
+    result = _analyze_symbol_smc(symbol=symbol, timeframe=timeframe, limit=limit)
+    if result is None:
+        return pd.DataFrame(), SmcResult()
+    df, smc = result
+    if not isinstance(df, pd.DataFrame):
+        raise TypeError("analyze_symbol_smc() did not return a DataFrame")
+    return df, smc
