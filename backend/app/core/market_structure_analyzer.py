@@ -42,7 +42,10 @@ os.environ.setdefault("MODEL_PATH", model_path)
 os.environ.setdefault("SAVE_SIGNALS_PATH", f"signals_{symbol_fut}_{tf}.csv")
 
 # --------- Import the real analyzer from the project root ---------
-from market_structure_analyzer import run_analyzer as _run_analyzer  # type: ignore  # noqa: E402
+from market_structure_analyzer import (  # type: ignore  # noqa: E402
+    run_analyzer as _run_analyzer,
+    analyze_symbol as _analyze_symbol,
+)
 
 
 def run_analyzer() -> pd.DataFrame:
@@ -57,4 +60,16 @@ def run_analyzer() -> pd.DataFrame:
         return pd.DataFrame()
     if not isinstance(df, pd.DataFrame):
         raise TypeError("run_analyzer() did not return a pandas DataFrame")
+    return df
+
+
+def analyze_symbol(symbol: str = "BTC", timeframe: str = "1h", limit: int = 200) -> pd.DataFrame:
+    """
+    Full SMC analysis (OBs, CHoCH/BOS, ranges, swings, FVGs) for BTC or ETH.
+    """
+    df: Any = _analyze_symbol(symbol=symbol, timeframe=timeframe, limit=limit)
+    if df is None:
+        return pd.DataFrame()
+    if not isinstance(df, pd.DataFrame):
+        raise TypeError("analyze_symbol() did not return a pandas DataFrame")
     return df

@@ -605,3 +605,219 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# =============================
+# Alias for backend wrapper
+# =============================
+
+run_analyzer = generate_signals
+
+
+# =============================
+# Order Block detection
+# =============================
+
+def _compute_order_blocks(df: pd.DataFrame, atr_multiplier: float = 1.5) -> pd.DataFrame:
+    """
+    Detect Order Blocks (OBs).
+
+    Bullish OB  = last bearish candle before a strong bullish impulse.
+    Bearish OB  = last bullish candle before a strong bearish impulse.
+
+    An impulse is a candle whose body (|close - open|) exceeds
+    atr_multiplier * ATR(14).
+    """
+    df = df.copy()
+    n = len(df)
+
+    ob_bull_low  = np.full(n, np.nan)
+    ob_bull_high = np.full(n, np.nan)
+    ob_bear_low  = np.full(n, np.nan)
+    ob_bear_high = np.full(n, np.nan)
+
+    opens  = df["open"].values
+    closes = df["close"].values
+    highs  = df["high"].values
+    lows   = df["low"].values
+    atr    = df["atr14"].values if "atr14" in df.columns else np.ones(n)
+
+    for i in range(2, n):
+        if np.isnan(atr[i]) or atr[i] <= 0:
+            continue
+        body = abs(closes[i] - opens[i])
+        if body <= atr_multiplier * atr[i]:
+            continue
+
+        if closes[i] > opens[i]:           # bullish impulse → find last bearish candle
+            for j in range(i - 1, max(0, i - 5), -1):
+                if closes[j] < opens[j]:
+                    ob_bull_low[j]  = lows[j]
+                    ob_bull_high[j] = highs[j]
+                    break
+        elif closes[i] < opens[i]:         # bearish impulse → find last bullish candle
+            for j in range(i - 1, max(0, i - 5), -1):
+                if closes[j] > opens[j]:
+                    ob_bear_low[j]  = lows[j]
+                    ob_bear_high[j] = highs[j]
+                    break
+
+    df["ob_bull_low"]  = ob_bull_low
+    df["ob_bull_high"] = ob_bull_high
+    df["ob_bear_low"]  = ob_bear_low
+    df["ob_bear_high"] = ob_bear_high
+    return df
+
+
+# =============================
+# CHoCH / BOS classification
+# =============================
+
+def _compute_choch_bos(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Classify structure breaks as BOS or CHoCH.
+
+    Uses the rolling sequence of swing highs and lows to determine trend:
+      - HH + HL  →  uptrend
+      - LH + LL  →  downtrend
+
+    BOS   = break in the direction of the current trend (continuation).
+    CHoCH = break against the current trend (reversal signal).
+    """
+    df = df.copy()
+    n = len(df)
+
+    swing_high = df["swing_high"].values if "swing_high" in df.columns else np.zeros(n, dtype=bool)
+    swing_low  = df["swing_low"].values  if "swing_low"  in df.columns else np.zeros(n, dtype=bool)
+
+    highs = df["high"].values
+    lows  = df["low"].values
+
+    bos_up_level     = np.full(n, np.nan)
+    bos_down_level   = np.full(n, np.nan)
+    choch_up_level   = np.full(n, np.nan)
+    choch_down_level = np.full(n, np.nan)
+
+    sh_history: list = []   # (index, price)
+    sl_history: list = []
+    trend = "neutral"
+
+    for i in range(n):
+        if swing_high[i]:
+            sh_history.append((i, highs[i]))
+        if swing_low[i]:
+            sl_history.append((i, lows[i]))
+
+        # Update trend from last two swing points of each type
+        if len(sh_history) >= 2 and len(sl_history) >= 2:
+            hh = sh_history[-1][1] > sh_history[-2][1]
+            hl = sl_history[-1][1] > sl_history[-2][1]
+            lh = sh_history[-1][1] < sh_history[-2][1]
+            ll = sl_history[-1][1] < sl_history[-2][1]
+            if hh and hl:
+                trend = "up"
+            elif lh and ll:
+                trend = "down"
+
+        # Check breaks vs last known swing levels
+        if sh_history:
+            last_sh = sh_history[-1][1]
+            if highs[i] > last_sh:
+                if trend == "up":
+                    bos_up_level[i] = last_sh
+                elif trend == "down":
+                    choch_up_level[i] = last_sh
+
+        if sl_history:
+            last_sl = sl_history[-1][1]
+            if lows[i] < last_sl:
+                if trend == "down":
+                    bos_down_level[i] = last_sl
+                elif trend == "up":
+                    choch_down_level[i] = last_sl
+
+    df["bos_up_level"]     = bos_up_level
+    df["bos_down_level"]   = bos_down_level
+    df["choch_up_level"]   = choch_up_level
+    df["choch_down_level"] = choch_down_level
+    return df
+
+
+# =============================
+# Range / consolidation detection
+# =============================
+
+def _compute_ranges(df: pd.DataFrame, lookback: int = 20, atr_multiplier: float = 2.5) -> pd.DataFrame:
+    """
+    Identify consolidation ranges.
+
+    A bar is flagged 'in_range' when the rolling (lookback+1)-bar high-low
+    spread is less than atr_multiplier * ATR(14).  Low spread = price is
+    oscillating without meaningful directional progress.
+    """
+    df = df.copy()
+    n = len(df)
+
+    range_high = np.full(n, np.nan)
+    range_low  = np.full(n, np.nan)
+    range_mid  = np.full(n, np.nan)
+    in_range   = np.zeros(n, dtype=bool)
+
+    highs = df["high"].values
+    lows  = df["low"].values
+    atr   = df["atr14"].values if "atr14" in df.columns else np.ones(n)
+
+    for i in range(lookback, n):
+        w_hi  = highs[i - lookback:i + 1]
+        w_lo  = lows[i - lookback:i + 1]
+        w_atr = atr[i - lookback:i + 1]
+
+        spread   = w_hi.max() - w_lo.min()
+        avg_atr  = float(np.nanmean(w_atr))
+
+        if avg_atr > 0 and spread < atr_multiplier * avg_atr:
+            rh = float(w_hi.max())
+            rl = float(w_lo.min())
+            range_high[i] = rh
+            range_low[i]  = rl
+            range_mid[i]  = (rh + rl) / 2.0
+            in_range[i]   = True
+
+    df["range_high"] = range_high
+    df["range_low"]  = range_low
+    df["range_mid"]  = range_mid
+    df["in_range"]   = in_range
+    return df
+
+
+# =============================
+# Multi-symbol full analysis
+# =============================
+
+SYMBOL_MAP = {
+    "BTC": {"spot": "BTC/USDT", "fut": "BTCUSDT",  "okx": "BTC-USDT"},
+    "ETH": {"spot": "ETH/USDT", "fut": "ETHUSDT",  "okx": "ETH-USDT"},
+}
+
+
+def analyze_symbol(symbol: str = "BTC", timeframe: str = "1h", limit: int = 200) -> pd.DataFrame:
+    """
+    Full SMC analysis pipeline for BTC or ETH.
+
+    Fetches OHLCV + OI + funding, then runs:
+      RSI · ATR · swings · sweeps · FVGs · Order Blocks · CHoCH/BOS · ranges
+
+    Returns an enriched DataFrame with every overlay column so the API
+    can slice and serialise what the frontend needs.
+    """
+    sym = SYMBOL_MAP.get(symbol.upper(), SYMBOL_MAP["BTC"])
+    tz  = TZ
+
+    ex  = ccxt.binance()
+    df  = load_price_df(ex, sym["spot"], timeframe, limit, tz)
+    df  = attach_aggregated_oi_and_funding(df, sym["fut"], sym["okx"], timeframe, limit, tz)
+    df  = compute_signals(df)           # RSI, ATR, swings, sweeps, FVGs
+    df  = _compute_order_blocks(df)
+    df  = _compute_choch_bos(df)
+    df  = _compute_ranges(df)
+    return df

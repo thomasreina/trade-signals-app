@@ -1,98 +1,161 @@
-import { useEffect, useState } from "react";
-import axios from "axios";
+import { useEffect, useState, useCallback } from "react";
+import "./App.css";
+import { fetchAnalysis } from "./api/client";
+import type { AnalysisResponse, Asset, Timeframe } from "./api/types";
+import { TradingChart } from "./components/TradingChart";
+import { SignalPanel }  from "./components/SignalPanel";
+import { LevelsPanel }  from "./components/LevelsPanel";
 
-// -------------------------------------------------------
-// Types — match your backend FastAPI models
-// -------------------------------------------------------
+// ─── constants ────────────────────────────────────────────────────────────────
+const ASSETS:     Asset[]     = ["BTC", "ETH"];
+const TIMEFRAMES: Timeframe[] = ["15m", "1h", "4h", "1d"];
+const TF_LABELS: Record<Timeframe, string> = {
+  "15m": "15m", "1h": "1H", "4h": "4H", "1d": "1D",
+};
+const TF_LIMIT: Record<Timeframe, number> = {
+  "15m": 200, "1h": 200, "4h": 150, "1d": 120,
+};
 
-export interface Signal {
-  timestamp: string;
-  side: string;
-  close: number;
-  m_bias: number;
-  m_conviction: string;
-  sl: number;
-  tp1: number;
-  tp2: number;
-  reasons: string;
+// ─── helpers ──────────────────────────────────────────────────────────────────
+function fmtPrice(n: number): string {
+  return n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-export interface TradeBacktest {
-  entry_time: string;
-  exit_time: string;
-  side: string;
-  entry: number;
-  sl: number;
-  tp1: number;
-  tp2: number;
-  exit_price: number;
-  exit_reason: string;
-  R: number;
-}
-
-// -------------------------------------------------------
-// API base — Always /api inside Docker
-// -------------------------------------------------------
-
-const API_BASE = "/api";
-
-// -------------------------------------------------------
-// Main Component
-// -------------------------------------------------------
-
-function App() {
-  const [signals, setSignals] = useState<Signal[]>([]);
-  const [backtests, setBacktests] = useState<TradeBacktest[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    async function loadData() {
-      try {
-        const [signalsRes, backtestsRes] = await Promise.all([
-          axios.get<Signal[]>(`${API_BASE}/signals/latest`),
-          axios.get<TradeBacktest[]>(`${API_BASE}/backtest/smc`),
-        ]);
-
-        setSignals(signalsRes.data);
-        setBacktests(backtestsRes.data);
-      } catch (err) {
-        console.error("Error fetching API data:", err);
-      } finally {
-        setLoading(false);
-      }
-    }
-
-    loadData();
-  }, []);
-
-  if (loading) return <div style={{ padding: 20 }}>Loading...</div>;
-
+function PriceChange({ analysis }: { analysis: AnalysisResponse | null }) {
+  if (!analysis || analysis.candles.length < 2) return null;
+  const last  = analysis.candles.at(-1)!;
+  const prev  = analysis.candles.at(-2)!;
+  const pct   = ((last.close - prev.close) / prev.close) * 100;
+  const color = pct >= 0 ? "var(--green)" : "var(--red)";
   return (
-    <div style={{ padding: 20, fontFamily: "Arial" }}>
-      <h1>Trade Signals Dashboard</h1>
-
-      <h2>Latest Signals</h2>
-      <ul>
-        {signals.map((s, i) => (
-          <li key={i}>
-            <strong>{s.timestamp}</strong> — {s.side} @ {s.close}  
-            (TP1 {s.tp1}, TP2 {s.tp2}, SL {s.sl})
-          </li>
-        ))}
-      </ul>
-
-      <h2>Backtests (SMC)</h2>
-      <ul>
-        {backtests.map((b, i) => (
-          <li key={i}>
-            <strong>{b.entry_time}</strong> → {b.exit_time}  
-            | {b.side} | Entry {b.entry} | Exit {b.exit_price}  
-            | R: {b.R}
-          </li>
-        ))}
-      </ul>
-    </div>
+    <span className="price-change" style={{ color }}>
+      {pct >= 0 ? "+" : ""}{pct.toFixed(2)}%
+    </span>
   );
 }
 
-export default App;
+// ─── Main App ─────────────────────────────────────────────────────────────────
+export default function App() {
+  const [asset,     setAsset]     = useState<Asset>("BTC");
+  const [timeframe, setTimeframe] = useState<Timeframe>("1h");
+  const [analysis,  setAnalysis]  = useState<AnalysisResponse | null>(null);
+  const [loading,   setLoading]   = useState(false);
+  const [error,     setError]     = useState<string | null>(null);
+  const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
+
+  const load = useCallback(async (a: Asset, tf: Timeframe) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await fetchAnalysis(a, tf, TF_LIMIT[tf]);
+      setAnalysis(data);
+      setLastUpdate(new Date());
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(`Failed to load ${a} ${tf}: ${msg}`);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // Load on mount and whenever asset/timeframe changes
+  useEffect(() => {
+    load(asset, timeframe);
+  }, [asset, timeframe, load]);
+
+  const lastClose = analysis?.candles.at(-1)?.close ?? 0;
+
+  const handleAssetChange = (a: Asset) => {
+    setAsset(a);
+    setAnalysis(null);
+  };
+
+  const handleTfChange = (tf: Timeframe) => {
+    setTimeframe(tf);
+    setAnalysis(null);
+  };
+
+  return (
+    <div className="app">
+      {/* ── Header ──────────────────────────────────────────────────── */}
+      <header className="app-header">
+        <div className="header-left">
+          <span className="logo">⬡ SMC Analyzer</span>
+
+          {/* Asset tabs */}
+          <div className="tab-group">
+            {ASSETS.map((a) => (
+              <button
+                key={a}
+                className={`tab-btn ${a === asset ? "active" : ""}`}
+                onClick={() => handleAssetChange(a)}
+              >
+                {a}/USDT
+              </button>
+            ))}
+          </div>
+
+          {/* Price */}
+          {lastClose > 0 && (
+            <div className="live-price">
+              <span className="price-value">${fmtPrice(lastClose)}</span>
+              <PriceChange analysis={analysis} />
+            </div>
+          )}
+        </div>
+
+        <div className="header-right">
+          {/* Timeframe tabs */}
+          <div className="tab-group tf-group">
+            {TIMEFRAMES.map((tf) => (
+              <button
+                key={tf}
+                className={`tab-btn ${tf === timeframe ? "active" : ""}`}
+                onClick={() => handleTfChange(tf)}
+              >
+                {TF_LABELS[tf]}
+              </button>
+            ))}
+          </div>
+
+          {/* Refresh */}
+          <button
+            className="refresh-btn"
+            onClick={() => load(asset, timeframe)}
+            disabled={loading}
+            title="Refresh"
+          >
+            {loading ? "⟳" : "↺"}
+          </button>
+
+          {lastUpdate && (
+            <span className="last-update">
+              {lastUpdate.toLocaleTimeString("en-US", { hour12: false })}
+            </span>
+          )}
+        </div>
+      </header>
+
+      {/* ── Error banner ────────────────────────────────────────────── */}
+      {error && (
+        <div className="error-banner">
+          {error}
+          <button onClick={() => setError(null)}>✕</button>
+        </div>
+      )}
+
+      {/* ── Main content ────────────────────────────────────────────── */}
+      <main className="app-main">
+        <div className="chart-col">
+          <TradingChart analysis={analysis} loading={loading} />
+        </div>
+        <div className="signal-col">
+          <SignalPanel analysis={analysis} />
+        </div>
+      </main>
+
+      {/* ── Levels panel (bottom) ────────────────────────────────────── */}
+      <LevelsPanel analysis={analysis} />
+    </div>
+  );
+}
